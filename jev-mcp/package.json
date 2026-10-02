@@ -1,0 +1,32 @@
+{
+  "name": "jev",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Jev judgment tools for ChatGPT Sites",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test scripts eslint.config.mjs",
+    "test": "node --import tsx --test test/*.test.*",
+    "check": "npm run typecheck && npm run lint && npm run build && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.2.0",
+    "@typesafe-ai/sdk": "0.6.0",
+    "re2js": "2.8.6",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.2.0",
+    "@types/node": "26.6.4",
+    "esbuild": "0.28.2",
+    "eslint": "10.11.0",
+    "miniflare": "5.20261001.0-alpha",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.0"
+  }
+}
