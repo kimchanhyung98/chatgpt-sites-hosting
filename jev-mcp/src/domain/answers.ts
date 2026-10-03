@@ -1,4 +1,4 @@
-import { isRecord as record, PROBABILITY_SUM_TOLERANCE } from './policies.js';
+import { isRecord as record, PROBABILITY_SUM_TOLERANCE, SCORE_MEAN_TOLERANCE } from './policies.js';
 
 export interface ValidatedEvaluation {
   model: string;
@@ -10,8 +10,15 @@ function invalid(): never {
   throw new Error('Invalid TypeSafe response.');
 }
 
-function entry(value: unknown): boolean {
-  return typeof value === 'string' || Array.isArray(value) || record(value);
+function sameJson(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, index) => sameJson(value, right[index]));
+  }
+  if (record(left) && record(right)) {
+    return sameKeys(right, Object.keys(left)) && Object.keys(left).every((key) => sameJson(left[key], right[key]));
+  }
+  return false;
 }
 
 function sameKeys(value: Record<string, unknown>, keys: string[]): boolean {
@@ -22,7 +29,7 @@ function probability(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-function distribution(value: unknown, keys: string[]): void {
+function distribution(value: unknown, keys: string[]): Record<string, number> {
   if (!record(value) || !sameKeys(value, keys)) invalid();
   let sum = 0;
   for (const key of keys) {
@@ -31,6 +38,7 @@ function distribution(value: unknown, keys: string[]): void {
     sum += amount;
   }
   if (Math.abs(sum - 1) > PROBABILITY_SUM_TOLERANCE) invalid();
+  return value as Record<string, number>;
 }
 
 export function validateEvaluationEnvelope(value: unknown): ValidatedEvaluation {
@@ -71,13 +79,19 @@ export function validateAnswers(
       if (!record(question.criteria)) invalid();
       const options = Object.keys(question.criteria);
       if (options.length === 0 || typeof answer.choice !== 'string' || !Object.hasOwn(question.criteria, answer.choice)) invalid();
-      distribution(answer.probabilities, options);
+      const probabilities = distribution(answer.probabilities, options);
+      if (probabilities[answer.choice]! < Math.max(...Object.values(probabilities)) - 1e-9) invalid();
     } else if (question.type === 'score') {
       if (!Array.isArray(question.criteria) || question.criteria.length === 0) invalid();
       const levels = question.criteria.map((_, index) => String(index));
       if (typeof answer.score !== 'number' || !Number.isFinite(answer.score) || answer.score < 0 || answer.score > levels.length - 1) invalid();
-      if (!record(answer.legend) || !sameKeys(answer.legend, levels) || !Object.values(answer.legend).every(entry)) invalid();
-      distribution(answer.probabilities, levels);
+      const legend = answer.legend;
+      if (!record(legend) || !sameKeys(legend, levels) || !question.criteria.every((level, index) => sameJson(level, legend[String(index)]))) invalid();
+      const probabilities = distribution(answer.probabilities, levels);
+      const mean = levels.reduce((sum, level) => sum + Number(level) * probabilities[level]!, 0);
+      // Extend the three-level policy's two-decimal rounding allowance to larger rubrics.
+      const roundingTolerance = 0.005 * (1 + levels.length * (levels.length - 1) / 2) + 1e-12;
+      if (Math.abs(mean - answer.score) > Math.max(SCORE_MEAN_TOLERANCE, roundingTolerance)) invalid();
     } else {
       invalid();
     }

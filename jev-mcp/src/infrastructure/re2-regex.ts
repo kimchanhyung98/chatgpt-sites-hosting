@@ -187,15 +187,21 @@ export function createRegexRunner(): JevRuntime['runRegex'] {
       let truncated = false;
       let tooLong = 0;
       let start = 0;
+      let searched = false;
       while (true) {
         if (signal?.aborted) throw new Error('request aborted');
         // Each search can inspect the entire remaining suffix even after a short match.
         const work = programSize * Math.max(1, document.length - start + 1)
           + Math.ceil(programSize * (document.length + 1) / 32);
         if (work > remaining) {
+          if (searched) {
+            truncated = true;
+            break;
+          }
           throw new Error('regex request work budget exceeded; simplify patterns or split the document');
         }
         remaining -= work;
+        searched = true;
         if (!matcher.find()) break;
         start = matcher.end();
         if (matcher.start() === start) start += 1;

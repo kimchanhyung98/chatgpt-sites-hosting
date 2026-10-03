@@ -10,8 +10,9 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test scripts eslint.config.mjs",
+    "pretest": "npm run build",
     "test": "node --import tsx --test test/*.test.*",
-    "check": "npm run typecheck && npm run lint && npm run build && npm test"
+    "check": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.2.0",

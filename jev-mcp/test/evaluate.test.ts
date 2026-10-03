@@ -309,6 +309,7 @@ test('answer validation requires offered choices and complete normalized distrib
   const upstream = evaluation();
   const invalidRoutes = [
     { ...upstream.answers.route, choice: 'invented' },
+    { ...upstream.answers.route, choice: 'skip' },
     { ...upstream.answers.route, probabilities: { accept: 1 } },
     { ...upstream.answers.route, probabilities: { accept: 0.8, skip: 0.1, extra: 0.1 } },
     { ...upstream.answers.route, probabilities: { accept: 0.4, skip: 0.4 } },
@@ -319,6 +320,10 @@ test('answer validation requires offered choices and complete normalized distrib
   }
   const roundedRoute = { ...upstream.answers.route, probabilities: { accept: 0.93, skip: 0.08 } };
   assert.doesNotThrow(() => validateAnswers(questionSet, { ...upstream, answers: { ...upstream.answers, route: roundedRoute } }));
+  for (const choice of ['accept', 'skip']) {
+    const tied = { ...upstream.answers.route, choice, probabilities: { accept: 0.5, skip: 0.5000000001 } };
+    assert.doesNotThrow(() => validateAnswers(questionSet, { ...upstream, answers: { ...upstream.answers, route: tied } }));
+  }
 });
 
 test('answer validation bounds scores and requires complete non-null legends', () => {
@@ -326,6 +331,8 @@ test('answer validation bounds scores and requires complete non-null legends', (
   const upstream = evaluation();
   const invalidScores = [
     ...[-0.01, 2.01, NaN, Infinity, '1'].map(score => ({ ...upstream.answers.quality, score })),
+    { ...upstream.answers.quality, score: 1.7 },
+    { ...upstream.answers.quality, legend: { '0': 'high', '1': { label: 'medium' }, '2': ['low'] } },
     { ...upstream.answers.quality, probabilities: { low: 0.6, medium: 0.1, high: 0.3 } },
     { ...upstream.answers.quality, legend: { '0': 'low', '1': 'medium' } },
     { ...upstream.answers.quality, legend: { '0': 'low', '1': 'medium', '2': null } },
@@ -335,6 +342,32 @@ test('answer validation bounds scores and requires complete non-null legends', (
   for (const quality of invalidScores) {
     assert.throws(() => validateAnswers(questionSet, { ...upstream, answers: { ...upstream.answers, quality } }));
   }
+});
+
+test('answer validation preserves nested score criteria regardless of object key order', () => {
+  const criteria = ['low', { label: 'medium', examples: ['first', { second: true }] }, ['high']];
+  const questions = { quality: { type: 'score', criteria } };
+  const quality = { ...evaluation().answers.quality, score: 0.72, legend: {
+    '0': 'low', '1': { examples: ['first', { second: true }], label: 'medium' }, '2': ['high'],
+  } };
+  const upstream = { ...evaluation(), answers: { quality } };
+  assert.doesNotThrow(() => validateAnswers(questions, upstream));
+  quality.legend['1'].examples.reverse();
+  assert.throws(() => validateAnswers(questions, upstream));
+});
+
+test('answer validation allows rounded ten-level scores but rejects contradictory means', () => {
+  const criteria = Array.from({ length: 10 }, (_, i) => `level ${i}`);
+  const quality = {
+    type: 'score', score: 6.65, confidence: 0.5,
+    legend: Object.fromEntries(criteria.map((value, index) => [index, value])),
+    probabilities: Object.fromEntries(criteria.map((_, index) => [index, index < 5 ? 0.01 : 0.19])),
+  };
+  const questions = { quality: { type: 'score', criteria } };
+  const upstream = { ...evaluation(), answers: { quality } };
+  assert.doesNotThrow(() => validateAnswers(questions, upstream));
+  quality.score = 6.4;
+  assert.throws(() => validateAnswers(questions, upstream));
 });
 
 test('answer validation rejects invalid model and unsafe token accounting', () => {

@@ -72,8 +72,18 @@ test('bounded catastrophic backtracking examples complete without timeout promis
 
 test('global matching also consumes the budget, preventing quadratic duplicate scans', async () => {
   const result = await createRegexRunner()('a'.repeat(50_000), '.*b|a', 'g');
-  assert.match(result.error ?? '', /work budget/);
-  assert.deepEqual(result, { ...clean([]), error: result.error });
+  assert.deepEqual(result, clean(['a'], true));
+});
+
+test('budget exhaustion preserves eligible candidates and skipped-match counts', async () => {
+  const run = createRegexRunner();
+  const result = await run('X'.repeat(2001) + ' 123 '.repeat(9500), '\\w+', 'g');
+  assert.deepEqual(result, clean(['123'], true, 1));
+  assert.match((await run('a'.repeat(50_000), '\\w+', 'g')).error ?? '', /work budget/);
+});
+
+test('budget exhaustion after empty matches is incomplete rather than absent', async () => {
+  assert.deepEqual(await createRegexRunner()('a'.repeat(50_000), 'z*', 'g'), clean([], true));
 });
 
 test('bounded but expensive searches are refused before matching', async () => {

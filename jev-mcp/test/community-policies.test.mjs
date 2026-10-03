@@ -69,6 +69,16 @@ test("ensureUniqueIds assigns fallbacks and resolves collisions", () => {
   assert.equal(renamed.size, 1);
 });
 
+test("ensureUniqueIds reserves later explicit IDs before fallbacks and duplicate suffixes", () => {
+  const { items } = ensureUniqueIds([
+    { text: "unnamed" }, { id: "evidence0" }, { id: "a" }, { id: "a" }, { id: "a_1" },
+    { id: "file/path" }, { id: "file/path" }, { id: "file_path_1" },
+  ], "evidence");
+  assert.deepEqual(items.map((item) => item.id), [
+    "evidence0_1", "evidence0", "a", "a_2", "a_1", "file_path", "file_path_2", "file_path_1",
+  ]);
+});
+
 test("truncate marks truncated text", () => {
   const out = truncate("abcdef", 3);
   assert.equal(out.length > 3, true);

@@ -38,14 +38,16 @@ export function ensureUniqueIds<T extends Identifiable>(
   items: T[],
   fallbackPrefix: string,
 ): { items: Array<T & { id: string }>; renamed: Map<string, string> } {
+  const supplied = new Set(items.map((item) => sanitizeId(item.id ?? "")).filter(Boolean));
   const used = new Set<string>();
   const renamed = new Map<string, string>();
   const out = items.map((item, i) => {
     const raw = item.id ?? "";
-    const base = sanitizeId(raw) || `${fallbackPrefix}${i}`;
+    const explicit = sanitizeId(raw);
+    const base = explicit || `${fallbackPrefix}${i}`;
     let id = base;
     let n = 1;
-    while (used.has(id)) {
+    while (used.has(id) || (supplied.has(id) && id !== explicit)) {
       id = `${base}_${n++}`;
     }
     used.add(id);
