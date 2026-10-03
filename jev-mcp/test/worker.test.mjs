@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY } from '@modelcontextprotocol/server';
 import { Miniflare, Response as WorkerResponse } from 'miniflare';
 
 const ORIGIN = 'https://jev.test';
@@ -120,6 +121,11 @@ test('production Worker negotiates legacy MCP, lists 13 tools and extracts witho
   assert.equal(initialized.result.serverInfo.name, 'jev');
   const listed = await rpc(await request(worker, envelope('tools/list')));
   assert.deepEqual(listed.result.tools.map((tool) => tool.name).sort(), NAMES);
+  for (const tool of listed.result.tools) {
+    assert.deepEqual(tool.annotations, {
+      readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+    }, tool.name);
+  }
   assert.ok(listed.result.tools.find((tool) => tool.name === 'jev_evaluate').outputSchema);
   const extracted = toolData(await call(worker, 'jev_extract', NO_MATCH));
   assert.equal(extracted.provider, 'none');
@@ -151,6 +157,11 @@ test('official Client negotiates modern MCP and preserves mixed typed results fr
   assert.equal(transport.protocolVersion, '2026-07-28');
   const listed = await client.listTools();
   assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), NAMES);
+  for (const tool of listed.tools) {
+    assert.deepEqual(tool.annotations, {
+      readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+    }, tool.name);
+  }
   const result = await client.callTool({ name: 'jev_evaluate', arguments: MIXED });
   assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.deepEqual(result.structuredContent.answers, ANSWERS);
@@ -163,6 +174,61 @@ test('official Client negotiates modern MCP and preserves mixed typed results fr
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].headers.authorization, `Bearer ${API_KEY}`);
   assert.deepEqual(calls[0].body, { ...MIXED, model: 'jev-test-model' });
+});
+
+test('Sites requests with missing routing headers support modern discovery, tools and extraction', async (t) => {
+  const { worker, calls } = await fixture(t);
+  for (const missing of [['Mcp-Method'], ['Mcp-Name'], ['Mcp-Method', 'Mcp-Name']]) {
+    await t.test(missing.join(', '), async (t) => {
+      const client = new Client({ name: 'sites-routing-test', version: '1' }, {
+        versionNegotiation: { mode: { pin: '2026-07-28' } },
+      });
+      t.after(() => client.close());
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${ORIGIN}/mcp`), {
+        requestInit: { headers: { 'oai-authenticated-user-id': 'synthetic-test-user' } },
+        fetch: async (input, init) => {
+          const incoming = new Request(input, init);
+          const headers = new Headers(incoming.headers);
+          for (const name of missing) headers.delete(name);
+          const response = await worker.dispatchFetch(incoming.url, {
+            method: incoming.method,
+            headers: Object.fromEntries(headers),
+            ...(incoming.method === 'GET' || incoming.method === 'HEAD' ? {} : { body: await incoming.text() }),
+          });
+          return new Response(await response.arrayBuffer(), { status: response.status, headers: Object.fromEntries(response.headers) });
+        },
+      }));
+      assert.ok(client.getDiscoverResult(), 'server/discover must succeed without a legacy fallback');
+      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), NAMES);
+      const result = await client.callTool({ name: 'jev_extract', arguments: NO_MATCH });
+      assert.notEqual(result.isError, true, JSON.stringify(result));
+      const extracted = JSON.parse(result.content[0].text);
+      assert.equal(extracted.provider, 'none');
+      assert.equal(extracted.summary.not_found, 1);
+      assert.equal(extracted.results[0].value, null);
+    });
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('Sites routing compatibility preserves header mismatch and authentication checks', async (t) => {
+  const { worker, calls } = await fixture(t);
+  const body = envelope('tools/call', {
+    name: 'jev_extract', arguments: NO_MATCH,
+    _meta: { [PROTOCOL_VERSION_META_KEY]: '2026-07-28', [CLIENT_CAPABILITIES_META_KEY]: {} },
+  });
+  for (const mismatch of [
+    { 'Mcp-Method': 'tools/list' },
+    { 'Mcp-Name': 'another_tool' },
+    { 'MCP-Protocol-Version': VERSION },
+  ]) {
+    const response = await request(worker, body, { headers: { 'MCP-Protocol-Version': '2026-07-28', ...mismatch } });
+    assert.equal(response.status, 400, JSON.stringify(mismatch));
+    assert.equal((await response.json()).error.code, -32020);
+  }
+  assert.equal((await request(worker, body, { authenticated: false })).status, 401);
+  assert.equal((await request(worker, body, { headers: { Origin: 'https://other.example' } })).status, 403);
+  assert.equal(calls.length, 0);
 });
 
 test('Sites identity is required and requests without Origin or with the same Origin are accepted', async (t) => {

@@ -1,4 +1,4 @@
-import { createMcpHandler, readRequestBody } from "@modelcontextprotocol/server";
+import { createMcpHandler, isJSONRPCRequest, readRequestBody } from "@modelcontextprotocol/server";
 import { createServer } from "./server.js";
 import { createTypeSafeEvaluator } from "./infrastructure/typesafe.js";
 import { createRegexRunner } from "./infrastructure/re2-regex.js";
@@ -52,14 +52,26 @@ export default {
       return errorResponse(415, "Content-Type must be application/json");
     }
 
+    let bodyText: string;
     let parsedBody: unknown;
     try {
       const body = await readRequestBody(request, MAX_REQUEST_BYTES);
       if (body.tooLarge) return errorResponse(413, "Request body is too large");
-      parsedBody = JSON.parse(body.text);
+      bodyText = body.text;
+      parsedBody = JSON.parse(bodyText);
       if (!validJsonTree(parsedBody)) return errorResponse(400, "Unsupported JSON key or nesting depth");
     } catch {
       return errorResponse(400, "Invalid JSON request");
+    }
+
+    // Sites may omit routing headers; keep any supplied values for SDK cross-checks.
+    const requestHeaders = new Headers(request.headers);
+    if (isJSONRPCRequest(parsedBody) && ["server/discover", "tools/list", "tools/call"].includes(parsedBody.method)) {
+      if (!requestHeaders.has("Mcp-Method")) requestHeaders.set("Mcp-Method", parsedBody.method);
+      const name = parsedBody.params?.name;
+      if (parsedBody.method === "tools/call" && typeof name === "string" && /^[a-zA-Z0-9_.-]{1,128}$/.test(name)) {
+        if (!requestHeaders.has("Mcp-Name")) requestHeaders.set("Mcp-Name", name);
+      }
     }
 
     const handler = createMcpHandler(() => createServer({
@@ -71,7 +83,7 @@ export default {
       maxSubscriptions: 0,
       keepAliveMs: 0,
     });
-    const response = await handler.fetch(request, { parsedBody });
+    const response = await handler.fetch(new Request(request, { headers: requestHeaders, body: bodyText }), { parsedBody });
     const headers = new Headers(response.headers);
     headers.set("Cache-Control", "no-store");
     return new Response(response.body, { status: response.status, headers });

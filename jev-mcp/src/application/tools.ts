@@ -145,6 +145,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_verify",
     {
       title: "Verify claims against evidence",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Check each claim against provided evidence text with TypeSafe Jev. Returns per claim: " +
         "verdict (verified | contradicted | unsupported), full probability distribution, confidence, " +
@@ -290,6 +291,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_screen",
     {
       title: "Screen content before it enters agent context",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Judge fetched or external text with TypeSafe Jev before an agent reads it: probability it contains " +
         "instructions aimed at an AI agent (prompt injection), whether it has substantive content, and (when a purpose " +
@@ -371,6 +373,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_noul",
     {
       title: "Calibrated probability for propositions",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Return a calibrated probability for each stated proposition with TypeSafe Jev, in one batched request: " +
         "high means likely, low means unlikely, middling means genuinely uncertain. Supplied context informs the " +
@@ -479,6 +482,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_find",
     {
       title: "Semantic search over candidates",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Rank candidates against a plain-language query with TypeSafe Jev — no embeddings needed. " +
         "One Choice scores every candidate id by how well it answers the query, plus a Noul checks whether " +
@@ -551,6 +555,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_classify",
     {
       title: "Classify items against a shared label set",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Assign each item to one class from a shared catalog with TypeSafe Jev, in one batched request: " +
         "the class catalog is sent once and every item becomes an independent Choice question. " +
@@ -724,6 +729,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_decide",
     {
       title: "Decide between bounded alternatives",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "One unresolved, bounded decision where semantic judgment over supplied evidence could change your plan: " +
         "implementation alternatives, product tradeoffs with known preferences, workflow selection. " +
@@ -878,6 +884,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_rerank",
     {
       title: "Score every candidate's relevance and return them sorted",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Rerank candidates against a query with TypeSafe Jev: one independent relevance probability per candidate, " +
         "all in a single request, then sorted by score. Unlike jev_find (which picks one best answer), rerank scores " +
@@ -988,6 +995,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_compare",
     {
       title: "Compare two passages for factual agreement",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Judge the relation between two passages with TypeSafe Jev: same_fact, contradicts, or different_facts, " +
         "with the full probability distribution, confidence, and an auto-versus-review decision. " +
@@ -1084,6 +1092,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_extract",
     {
       title: "Extract fields by regex, Jev picks the right match",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Extract structured fields from a document with TypeSafe Jev as the picker, not the generator: your regex " +
         "finds candidate substrings in code, Jev chooses which candidate is the field's true value, and the result is " +
@@ -1302,6 +1311,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_audit",
     {
       title: "Audit extracted values against their source text",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Audit extracted values against the text they claim to come from, before the values are trusted: one request with a " +
         "per-value failure-mode battery (hallucinated / off-target / incomplete / wrong format, each framed so true = something " +
@@ -1706,6 +1716,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_review",
     {
       title: "Review a proposed patch",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Score a proposed diff against the request with TypeSafe Jev before the task is called done. " +
         "Returns 0..2 rubric scores for correctness, spec match, test gap, and blast radius (the last two lower the " +
@@ -1855,6 +1866,7 @@ export function registerCommunityTools(server: McpServer, runtime: JevRuntime): 
     "jev_gate",
     {
       title: "Gate completion: review a patch and verify claims",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       description:
         "Review a proposed patch and verify completion claims against supplied evidence in one TypeSafe Jev call. " +
         "Auto only when the patch review is accepted and every claim is verified at or above auto_accept. " +
