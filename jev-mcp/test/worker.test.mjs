@@ -112,6 +112,25 @@ function toolData(reply) {
   return JSON.parse(reply.result.content[0].text);
 }
 
+function assertToolCatalog(tools) {
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), NAMES);
+  for (const tool of tools) {
+    assert.equal(typeof tool.description, 'string', tool.name);
+    assert.ok(tool.description.trim().length > 0, tool.name);
+    assert.equal(tool.inputSchema.type, 'object', tool.name);
+    assert.ok(Object.keys(tool.inputSchema.properties).length > 0, tool.name);
+    assert.ok(tool.inputSchema.required.length > 0, tool.name);
+    for (const required of tool.inputSchema.required) {
+      assert.ok(Object.hasOwn(tool.inputSchema.properties, required), `${tool.name}.${required}`);
+    }
+    assert.deepEqual(tool.annotations, {
+      readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+    }, tool.name);
+  }
+  assert.equal(tools.find((tool) => tool.name === 'jev_find').inputSchema.properties.candidates.minItems, 2);
+  assert.ok(tools.find((tool) => tool.name === 'jev_evaluate').outputSchema);
+}
+
 test('production Worker negotiates legacy MCP, lists 13 tools and extracts without outbound calls', async (t) => {
   const { worker, calls } = await fixture(t);
   const initialized = await rpc(await request(worker, envelope('initialize', {
@@ -120,13 +139,7 @@ test('production Worker negotiates legacy MCP, lists 13 tools and extracts witho
   assert.equal(initialized.result.protocolVersion, VERSION);
   assert.equal(initialized.result.serverInfo.name, 'jev');
   const listed = await rpc(await request(worker, envelope('tools/list')));
-  assert.deepEqual(listed.result.tools.map((tool) => tool.name).sort(), NAMES);
-  for (const tool of listed.result.tools) {
-    assert.deepEqual(tool.annotations, {
-      readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true,
-    }, tool.name);
-  }
-  assert.ok(listed.result.tools.find((tool) => tool.name === 'jev_evaluate').outputSchema);
+  assertToolCatalog(listed.result.tools);
   const extracted = toolData(await call(worker, 'jev_extract', NO_MATCH));
   assert.equal(extracted.provider, 'none');
   assert.equal(extracted.summary.not_found, 1);
@@ -156,12 +169,7 @@ test('official Client negotiates modern MCP and preserves mixed typed results fr
   assert.ok(client.getDiscoverResult(), 'server/discover must succeed without a legacy fallback');
   assert.equal(transport.protocolVersion, '2026-07-28');
   const listed = await client.listTools();
-  assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), NAMES);
-  for (const tool of listed.tools) {
-    assert.deepEqual(tool.annotations, {
-      readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true,
-    }, tool.name);
-  }
+  assertToolCatalog(listed.tools);
   const result = await client.callTool({ name: 'jev_evaluate', arguments: MIXED });
   assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.deepEqual(result.structuredContent.answers, ANSWERS);
@@ -174,6 +182,103 @@ test('official Client negotiates modern MCP and preserves mixed typed results fr
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].headers.authorization, `Bearer ${API_KEY}`);
   assert.deepEqual(calls[0].body, { ...MIXED, model: 'jev-test-model' });
+});
+
+test('every advertised tool completes through the production Worker and provider adapter', async (t) => {
+  const { worker, calls } = await fixture(t, {
+    upstream: ({ body }) => WorkerResponse.json({
+      model: 'worker-sample-model', usage: { input_tokens: 42, output_tokens: 8 },
+      answers: Object.fromEntries(Object.entries(body.questions).map(([id, question]) => {
+        if (question.type === 'noul') {
+          return [id, { type: 'noul', noul: /^(injection|check_|absence_)/.test(id) ? 0.01 : 0.99 }];
+        }
+        if (question.type === 'choice') {
+          const keys = Object.keys(question.criteria);
+          return [id, {
+            type: 'choice', choice: keys[0], confidence: 1,
+            probabilities: Object.fromEntries(keys.map((key, i) => [key, i === 0 ? 1 : 0])),
+          }];
+        }
+        assert.equal(question.type, 'score');
+        const score = /(?:test_gap|blast_radius)$/.test(id) ? 0 : question.criteria.length - 1;
+        return [id, {
+          type: 'score', score, confidence: 1,
+          legend: Object.fromEntries(question.criteria.map((level, i) => [String(i), level])),
+          probabilities: Object.fromEntries(question.criteria.map((_, i) => [String(i), i === score ? 1 : 0])),
+        }];
+      })),
+    }),
+  });
+  const review = { request: 'Reject empty input.', diff: '+ if (!input) throw Error();', tests: 'Empty input is rejected.' };
+  const perFile = {
+    request: review.request, tests: review.tests,
+    files: [{ path: 'input.ts', diff: review.diff }, { path: 'input.test.ts', diff: '+ assert.throws(() => parse(""));' }],
+  };
+  const candidates = [{ id: 'tests', text: 'The empty-input test passed.' }, { id: 'other', text: 'Release notes.' }];
+  const cases = [
+    ['jev_evaluate', MIXED, (data) => {
+      assert.equal(data.answers.category.choice, 'refund');
+      assert.equal(data.answers.quality.score, 2);
+      assert.equal(data.answers.actionable.noul, 0.99);
+    }],
+    ['jev_verify', { claims: ['Tests passed.'], evidence: [{ id: 'none', text: 'Tests passed.' }, { id: 'notes', text: 'Other notes.' }] }, (data) => {
+      assert.equal(data.results[0].verdict, 'verified');
+      assert.equal(data.results[0].supporting_evidence, 'none');
+    }],
+    ['jev_screen', { text: 'The release is available.', purpose: 'Read release information.' }, (data) => assert.equal(data.recommendation.action, 'pass')],
+    ['jev_noul', { propositions: ['Tests passed.', 'The input is validated.'], context: 'Tests passed and input is validated.' }, (data) => {
+      assert.deepEqual(data.results.map((row) => row.label), ['likely', 'likely']);
+    }],
+    ['jev_find', { query: 'Test result', candidates }, (data) => assert.equal(data.top[0].id, 'tests')],
+    ['jev_classify', {
+      items: [{ id: 'charge', text: 'Charged twice.' }],
+      classes: [{ id: 'billing', description: 'Payment requests' }, { id: 'technical', description: 'Technical requests' }],
+    }, (data) => assert.equal(data.results[0].classification, 'billing')],
+    ['jev_decide', {
+      decision: 'Choose storage.', evidence: 'One writer and no network.', priorities: 'Minimal operations.',
+      candidates: [{ id: 'sqlite', description: 'Embedded storage' }, { id: 'postgres', description: 'Database server' }],
+      requirements: ['Works without a network.'],
+    }, (data) => {
+      assert.equal(data.recommendation.selected, 'sqlite');
+      assert.deepEqual(data.checks.map((check) => check.answer), ['supported', 'supported']);
+    }],
+    ['jev_rerank', { query: 'Test result', candidates }, (data) => assert.deepEqual(data.ranked.map((row) => row.id), ['tests', 'other'])],
+    ['jev_compare', { passage_a: 'Version one costs $10.', passage_b: 'Version one costs $10.', aspects: ['version', 'price'] }, (data) => {
+      assert.equal(data.overall.relation, 'same_fact');
+      assert.deepEqual(data.aspects.map((row) => row.relation), ['same_fact', 'same_fact']);
+    }],
+    ['jev_extract', { document: 'Invoice 123; total 456.', fields: [{ id: 'invoice', description: 'Invoice number', pattern: '[0-9]+' }] }, (data) => {
+      assert.equal(data.results[0].value, '123');
+      assert.equal(data.results[0].status, 'auto');
+    }],
+    ['jev_audit', { source: 'Invoice 123.', records: [{ id: 'invoice', request: 'Invoice number', value: '123' }] }, (data) => assert.equal(data.action, 'pass')],
+    ['jev_review', review, (data) => assert.equal(data.action, 'auto')],
+    ['jev_gate', { ...review, claims: ['Tests passed.'], evidence: 'Tests passed.' }, (data) => assert.equal(data.action, 'auto')],
+    ['jev_review', perFile, (data) => {
+      assert.equal(data.action, 'auto');
+      assert.equal(data.mode, 'per-file');
+      assert.equal(data.files.length, 2);
+    }],
+    ['jev_gate', { ...perFile, claims: ['Tests passed.'], evidence: 'Tests passed.' }, (data) => {
+      assert.equal(data.action, 'auto');
+      assert.equal(data.review.files.length, 2);
+      assert.equal(data.verification.results[0].verdict, 'verified');
+    }],
+  ];
+  assert.deepEqual([...new Set(cases.map(([name]) => name))].sort(), NAMES);
+  for (const [name, args, check] of cases) {
+    await t.test(`${name}${args.files ? ' per-file' : ''}`, async () => {
+      const before = calls.length;
+      const data = toolData(await call(worker, name, args));
+      assert.equal(data.provider, 'typesafe');
+      assert.equal(data.model, 'worker-sample-model');
+      assert.deepEqual(data.usage, { input_tokens: 42, output_tokens: 8 });
+      assert.equal(calls.length, before + 1);
+      assert.equal(calls.at(-1).url, 'https://api.typesafe.ai/v1/systemone');
+      assert.equal(calls.at(-1).body.model, 'jev-test-model');
+      check(data);
+    });
+  }
 });
 
 test('Sites requests with missing routing headers support modern discovery, tools and extraction', async (t) => {
@@ -199,7 +304,7 @@ test('Sites requests with missing routing headers support modern discovery, tool
         },
       }));
       assert.ok(client.getDiscoverResult(), 'server/discover must succeed without a legacy fallback');
-      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), NAMES);
+      assertToolCatalog((await client.listTools()).tools);
       const result = await client.callTool({ name: 'jev_extract', arguments: NO_MATCH });
       assert.notEqual(result.isError, true, JSON.stringify(result));
       const extracted = JSON.parse(result.content[0].text);
